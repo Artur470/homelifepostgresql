@@ -28,24 +28,22 @@ class Color(models.Model):
     def __str__(self):
         return self.title
 
-
 class Product(models.Model):
     title = models.CharField(max_length=255)
     image1 = models.ImageField(upload_to='images/', blank=True)
     image2 = models.ImageField(upload_to='images/', blank=True, null=True)
     image3 = models.ImageField(upload_to='images/', blank=True, null=True)
-    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
-    color = models.ForeignKey(Color, on_delete=models.CASCADE, null=True, blank=True)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    promotion = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name='products')
+    category = models.ForeignKey('Category', on_delete=models.CASCADE, related_name='products')
+    color = models.ForeignKey('Color', on_delete=models.CASCADE, null=True, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2)  # Исправлено
+    promotion = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # Исправлено
+    brand = models.ForeignKey('Brand', on_delete=models.CASCADE, related_name='products')
     quantity = models.IntegerField()
-    description = models.TextField(max_length=2551)
+    description = models.TextField(max_length=255)
     is_product_of_the_day = models.BooleanField(default=False)
 
     def __str__(self):
         return self.title
-
 
 class Review(models.Model):
 

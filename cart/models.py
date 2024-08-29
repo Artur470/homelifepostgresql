@@ -1,53 +1,50 @@
 from django.db import models
-from django.contrib.auth.models import User
-from product.models import Product
 from django.conf import settings
+from product.models import Product
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.core.mail import send_mail
-from django.utils import timezone
-import pytz
-
+from decimal import Decimal
+import uuid
 class Cart(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     ordered = models.BooleanField(default=False)
-    total_price = models.FloatField(default=0)
-
+    total_price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    id = models.BigAutoField(primary_key=True)  # Обновлено на BigAutoField
     def __str__(self):
-        return str(self.user.first_name) + " " + str(self.total_price)
-
+        return f"{self.user.first_name} - {self.total_price:.2f}"
 
 class CartItem(models.Model):
-    cart = models.ForeignKey(Cart, on_delete=models.CASCADE)
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    price = models.FloatField(default=0)
-    promotion = models.FloatField(blank=True, null=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    promotion = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     isOrder = models.BooleanField(default=False)
     quantity = models.IntegerField(default=1)
 
     def __str__(self):
-        return str(self.user.first_name) + " " + str(self.product.title)
+        return f"{self.user.first_name} - {self.product.title}"
 
+    def save(self, *args, **kwargs):
+        product = self.product
+        quantity = self.quantity
 
-@receiver(pre_save, sender=CartItem)
-def correct_price(sender, instance, **kwargs):
-    product = instance.product
-    quantity = instance.quantity
-    price_of_product = float(product.price)
+        # Вычисляем цену с учетом промо-акции
+        if product.promotion:
+            self.price = Decimal(product.promotion) * quantity
+        else:
+            self.price = Decimal(product.price) * quantity
 
-    if instance.promotion is not None and instance.promotion > 0:
-        # Применяем скидку, если она существует и больше нуля
-        discount_percentage = instance.promotion
-        discounted_price = price_of_product * (1 - discount_percentage / 100)
-        instance.price = quantity * discounted_price
-    else:
-        # Без промоакции
-        instance.price = quantity * price_of_product
+        super().save(*args, **kwargs)
 
-
-#order
-
+@receiver(post_save, sender=CartItem)
+def update_cart_total(sender, instance, **kwargs):
+    cart = instance.cart
+    total_price = sum(item.price for item in cart.items.all())
+    cart.total_price = total_price
+    cart.save()
+# Order Models
 class PaymentMethod(models.Model):
     name = models.CharField(max_length=50)  # Например: "Card", "Cash", "Bank Transfer"
     description = models.TextField(blank=True, null=True)  # Дополнительное описание (по желанию)
@@ -55,12 +52,11 @@ class PaymentMethod(models.Model):
     def __str__(self):
         return self.name
 
-
 class Order(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE)
     payment_method = models.ForeignKey(PaymentMethod, null=True, blank=True, on_delete=models.SET_NULL)
-    total_price = models.FloatField()
+    total_price = models.DecimalField(max_digits=10, decimal_places=2)  # Используем DecimalField для точности
     address = models.CharField(max_length=255)
     ordered_at = models.DateTimeField(auto_now_add=True)
 
@@ -69,35 +65,35 @@ class Order(models.Model):
 
     def clear_user_cart(self):
         # Очистите корзину пользователя
-        self.cart.cartitem_set.all().delete()
-        self.cart.total_price = 0
+        cart_items = self.cart.items.all()
+        cart_items.delete()
+        self.cart.total_price = Decimal('0.00')
         self.cart.save()
 
     def send_order_email(self):
         subject = 'Новый заказ!'
         message = f'Номер заказа: {self.id}\n' \
                   f'Email Пользователя: {self.user.email}\n' \
-                  f'Имя пользователя: {self.user.first_name}, {self.user.last_name}\n' \
-                  f'Номер телефона пользователя: {self.user.number}\n' \
+                  f'Имя пользователя: {self.user.first_name} {self.user.last_name}\n' \
                   f'Адрес: {self.address}\n' \
                   f'Способ оплаты: {self.payment_method.name if self.payment_method else "Не указан"}\n' \
-                  f'Цена: {self.total_price}\n' \
+                  f'Цена: {self.total_price:.2f}\n' \
                   f'Время заказа: {self.ordered_at}\n\n'
 
-        if self.user.wholesaler:
+        if hasattr(self.user, 'wholesaler') and self.user.wholesaler:
             message += "Покупатель является оптовиком.\n\n"
 
         # Добавляем информацию о товарах
-        items = self.cart.cartitem_set.all()
+        items = self.cart.items.all()
         if items.exists():
             message += "Товары в заказе:\n"
             for item in items:
                 message += f'Продукт: {item.product.title}\n' \
-                           f'Категория: {item.product.category}\n' \
-                           f'Цвет: {item.product.color}\n' \
-                           f'Бренд: {item.product.brand}\n' \
+                           f'Категория: {item.product.category.title}\n' \
+                           f'Цвет: {item.product.color.title}\n' \
+                           f'Бренд: {item.product.brand.title}\n' \
                            f'Количество: {item.quantity}\n' \
-                           f'Цена товара: {item.price}\n\n'
+                           f'Цена товара: {item.price:.2f}\n\n'
         else:
             message += "Корзина пуста."
 
